@@ -9,34 +9,41 @@ import re
 import os
 import argparse
 import sys
+from pathlib import Path
+
 
 class CodeGrepper:
-    TEXTCHARS = ''.join(map(chr, [7,8,9,10,12,13,27] + list(range(0x20, 0x100)) ))
-    
+    TEXTCHARS = ''.join(map(chr, [7, 8, 9, 10, 12, 13, 27] + list(range(0x20, 0x100))))
+
     def __init__(self, category=None, subcategory=None, filter=None, case_insensitive=False):
-        self.signatures = self.init_signatures(category,subcategory)
-        self.category = category 
+        self.signatures = self.init_signatures(category, subcategory)
+        self.category = category
         self.subcategory = subcategory
         self.case_insensitive = case_insensitive
-        self.highlight = ["\033[92m","\033[0m"] if os.name != "nt" else ["",""]
-        self.filter = [filter] if filter else ["php","rb","js","java","pl","phtml","cs","c","cpp","xml","config","ini","sql"]
-        self.exclude = ["png","jpg","jpeg","gif","woff","svg","woff2","tiff","mp3"]
-            
-    def is_binary(self, filepath):
+        self.highlight = ["\033[92m", "\033[0m"] if os.name != "nt" else ["", ""]
+        self.filter = [filter] if filter else ["php", "rb", "js", "java", "pl", "phtml", "cs", "c", "cpp", "xml",
+                                               "config", "ini", "sql"]
+        self.exclude = ["png", "jpg", "jpeg", "gif", "woff", "svg", "woff2", "tiff", "mp3"]
+
+    @staticmethod
+    def is_binary(filepath):
         try:
             with open(filepath, "rb").read(1024) as lookup:
-                return bool(bytes.translate(None, TEXTCHARS))
-        except:
+                return bool(bytes.translate(None, CodeGrepper.TEXTCHARS.encode()))
+        except Exception as e:
+            print(e)
             return False
 
-    def is_filtered(self, filepath):
-        name, ext = os.path.splitext(filepath)
-        if ext.replace(".","") in self.filter:
+    def is_filtered(self, file_path):
+        name, ext = os.path.splitext(file_path)
+        if ext.replace(".", "") in self.filter:
             return True
         else:
-            return False        
-        
+            return False
+
     def audit(self, directory=".", regex=None):
+        if directory:
+            directory = str(Path(directory).resolve())
         if regex is None:
             if isinstance(self.signatures, list):
                 for regex in self.signatures:
@@ -52,34 +59,36 @@ class CodeGrepper:
 
     def search(self, directory=".", regex=None, category=None, subcategory=None):
         pattern = re.compile(regex, re.IGNORECASE) if self.case_insensitive else re.compile(regex)
-        
+
         for path, _, files in os.walk(directory):
             for fn in files:
-                filepath = os.path.join(path, fn)
-                
-                if self.is_binary(filepath): 
+                file_path = os.path.join(path, fn)
+
+                if self.is_binary(file_path):
                     continue
-                if not self.is_filtered(filepath):
+                if not self.is_filtered(file_path):
                     continue
                 try:
-                    with open(filepath, "r", errors="ignore") as handle:
+                    with open(file_path, "r", errors="ignore") as handle:
                         for lineno, line in enumerate(handle):
                             mo = pattern.search(line)
                             if mo:
-                                print("[*][%s][%s]%s:%s: %s" % (category, subcategory, filepath, lineno,
-                                      line.strip().replace(mo.group(), "%s" % self.highlight[0] + mo.group() + self.highlight[1] )))
-                except:
-                    print("[-] Error opening file: {}".format(filepath) )
-                    
+                                print("[*][%s][%s]%s:%s: %s" % (category, subcategory, file_path, lineno,
+                                                                line.strip().replace(mo.group(), "%s" % self.highlight[
+                                                                    0] + mo.group() + self.highlight[1])))
+                except Exception as e:
+                    print(e)
+                    print("[-] Error opening file: {}".format(file_path))
+
     def init_signatures(self, category=None, subcategory=None):
         signatures = {
-            "dotnet" : {
-                "cookies" : [
+            "dotnet": {
+                "cookies": [
                     r"System.Net.Cookie",
                     r"HTTPOnly",
                     r"document.cookie"
                 ],
-                "crypto" : [
+                "crypto": [
                     r"RNGCryptoServiceProvider",
                     r"SHA",
                     r"MD5",
@@ -93,7 +102,7 @@ class CodeGrepper:
                     r"PBEParameterSpec",
                     r"PasswordDeriveBytes"
                 ],
-                "error" : [
+                "error": [
                     r"catch[\s]*\{",
                     r"Finally",
                     r"trace",
@@ -101,7 +110,7 @@ class CodeGrepper:
                     r"customErrors",
                     r"mode"
                 ],
-                "inputcontrols" : [
+                "inputcontrols": [
                     r"system.web.ui.htmlcontrols.htmlinputhidden",
                     r"system.web.ui.webcontrols.hiddenfield",
                     r"system.web.ui.webcontrols.hyperlink",
@@ -112,17 +121,17 @@ class CodeGrepper:
                     r"system.web.ui.webcontrols.checkboxlist",
                     r"system.web.ui.webcontrols.dropdownlist"
                 ],
-                "legacy" : [
+                "legacy": [
                     r"printf",
                     r"strcpy"
                 ],
-                "logging" : [
+                "logging": [
                     r"log4net",
                     r"Console.WriteLine",
                     r"System.Diagnostics.Debug",
                     r"System.Diagnostics.Trace"
                 ],
-                "memory" : [
+                "memory": [
                     r"MemoryStream",
                     r".Write",
                     r".Read",
@@ -133,7 +142,7 @@ class CodeGrepper:
                     r".Finalize",
                     r".CopyTo"
                 ],
-                "permission" : [
+                "permission": [
                     r".RequestMinimum",
                     r".RequestOptional",
                     r"Assert",
@@ -149,10 +158,10 @@ class CodeGrepper:
                     r"SecurityPermission.ControlDomainPolicy",
                     r"SecurityPermission.ControlPolicy"
                 ],
-                "reflection" : [
+                "reflection": [
                     r"Reflection"
                 ],
-                "request" : [
+                "request": [
                     r"parameter",
                     r"white-list.",
                     r"request.accepttypes",
@@ -179,18 +188,22 @@ class CodeGrepper:
                     r"TextBox.Text",
                     r"recordSet"
                 ],
-                "serialization" : [
+                "serialization": [
                     r"Serialization",
                     r"SerializationFormatter",
                     r"Serializable",
                     r"SerializeObject",
                     r"SerializationBinder",
-                    r"JsonSerializer",
+                    r"JavaScriptSerializer",
+                    r"Json.Net",
+                    r"YamlDotNet",
                     r"JsonSerializerSettings",
-                    r"DleserializeObject",
-                    r"ISerializable"
+                    r"DeserializeObject",
+                    r"ISerializable",
+                    r"(Json|JavaScript|Xml|(Net)*DataContract)Serializer",
+                    r"(Binary|ObjectState|Los|Soap)Formatter"
                 ],
-                "sql" : [
+                "sql": [
                     r"exec\s*sp_executesql",
                     r"execute\s*sp_executesql",
                     r"exec\s*sp_",
@@ -225,12 +238,12 @@ class CodeGrepper:
                     r"StoredProcedure",
                     r"System\.Data\.sql"
                 ],
-                "ssl" : [
+                "ssl": [
                     r"ServerCertificateValidationCallback",
                     r"checkCertificateName",
                     r"checkCertificateRevocationList"
                 ],
-                "xss" : [
+                "xss": [
                     r"response.write",
                     r"<%\s*=",
                     r"HttpUtility",
@@ -240,8 +253,8 @@ class CodeGrepper:
                     r"innerHTML"
                 ]
             },
-            "java" : {
-                "exceptions" : [
+            "java": {
+                "exceptions": [
                     r"AccessControlException",
                     r"BindException",
                     r"ConcurrentModificationException",
@@ -269,7 +282,7 @@ class CodeGrepper:
                     r"UnrecoverableEntryException",
                     r"UnrecoverableKeyException"
                 ],
-                "java" : [
+                "java": [
                     r"AccessController",
                     r"addHeader",
                     r"CallableStatement",
@@ -314,7 +327,7 @@ class CodeGrepper:
                     r"printStackTrace[\s]\(",
                     r"SecretKeySpec"
                 ],
-                "jsp" : [
+                "jsp": [
                     r"request.getQueryString",
                     r"exec[\s]*\(.*\)",
                     r"Runtime\.",
@@ -331,13 +344,13 @@ class CodeGrepper:
                     r"executeQuery[\s]*\(.*\)",
                     r"Socket[\s]*\("
                 ],
-                "ssl" : [
+                "ssl": [
                     r"A[Ll][Ll][Oo][Ww]_?A[Ll][Ll]_?H[Oo][Ss][Tt][Nn][Aa][Mm][Ee]_?V[Ee][Rr][Ii][Ff][Ii][Ee][Rr]",
                     r"SSLSocketFactory",
                     r"is[Tt]rusted",
                     r"trustmanager"
                 ],
-                "xxe" : [
+                "xxe": [
                     r"SAXParserFactory",
                     r"DOM4J",
                     r"XMLInputFactory",
@@ -354,8 +367,8 @@ class CodeGrepper:
                     r"StAXSource"
                 ]
             },
-            "owasp" : {
-                "apache" : [
+            "owasp": {
+                "apache": [
                     r"exec",
                     r"sprint",
                     r"document.referrer",
@@ -402,7 +415,7 @@ class CodeGrepper:
                     r"ap_unescape_urlencoded",
                     r"ap_escape_path_segment"
                 ],
-                "asp" : [
+                "asp": [
                     r"Request",
                     r"Request.QueryString",
                     r"Request.Form",
@@ -462,7 +475,7 @@ class CodeGrepper:
                     r"Server.Transfer",
                     r"Server.Execute"
                 ],
-                "dotnet" : [
+                "dotnet": [
                     r"request.accesstypes",
                     r"request.browser",
                     r"request.files",
@@ -647,7 +660,7 @@ class CodeGrepper:
                     r"printf",
                     r"strcpy"
                 ],
-                "java" : [
+                "java": [
                     r"FileInputStream",
                     r"ObjectInputStream",
                     r"FilterInputStream",
@@ -772,7 +785,7 @@ class CodeGrepper:
                     r"document.URL",
                     r"document.URL"
                 ],
-                "javascript" : [
+                "javascript": [
                     r"eval",
                     r"document.cookie",
                     r"document.referrer",
@@ -805,15 +818,15 @@ class CodeGrepper:
                     r"XMLHTTP"
                 ]
             },
-            "perl" : {
-                "exec" : [
+            "perl": {
+                "exec": [
                     r"exec(\s*\(|\s+).*\$.*\)?",
                     r"fork(\s*\(|\s+).*\)?",
                     r"`.*\$.*`",
                     r"system(\s*\(?|\s+)*\$.*\)?",
                     r"open(\s*\(?|\s+)*\$.*\)?"
                 ],
-                "perl.original" : [
+                "perl.original": [
                     r"getc",
                     r"readdir",
                     r"read",
@@ -844,12 +857,12 @@ class CodeGrepper:
                     r"umask",
                     r"param.*\(.*\);"
                 ],
-                "superglobal" : [
+                "superglobal": [
                     r"\$ARGV\[.*?\]",
                     r"\$ARGC",
                     r"\$ENV"
                 ],
-                "todo" : [
+                "todo": [
                     r"getc",
                     r"readdir(\s+|\s*\().*\$.*",
                     r"read(\s+|\s*\().*\$.*",
@@ -875,12 +888,12 @@ class CodeGrepper:
                     r"umask",
                     r"->param\s*\(.*\)"
                 ],
-                "xss" : [
+                "xss": [
                     r"print\s*.*\$.*->param\(?.*\)?"
                 ]
             },
-            "php" : {
-                "callbacks" : [
+            "php": {
+                "callbacks": [
                     r"ob_start",
                     r"array_diff_uassoc",
                     r"array_diff_ukey",
@@ -914,7 +927,7 @@ class CodeGrepper:
                     r"sqlite_create_aggregate",
                     r"sqlite_create_function"
                 ],
-                "exec" : [
+                "exec": [
                     r"assert([\s]*\(|[\s]+).*\)?",
                     r"exec([\s]*\(|[\s]+).*\)?",
                     r"`.*`",
@@ -928,7 +941,7 @@ class CodeGrepper:
                     r"shell_exec([\s]*\(|[\s]+).*\)?",
                     r"system([\s]*\(|[\s]+).*\)?"
                 ],
-                "extensions" : [
+                "extensions": [
                     r"expect_",
                     r"pcntl_",
                     r"posix_",
@@ -945,7 +958,7 @@ class CodeGrepper:
                     r"shmop_",
                     r"registerPhpFunctions"
                 ],
-                "info" : [
+                "info": [
                     r"phpinfo\s*\(.*\)",
                     r"phpcredits\s*\(.*\)",
                     r"php_logo_guid\s*\(.*\)",
@@ -955,7 +968,7 @@ class CodeGrepper:
                     r"zend_version\s*\(.*\)",
                     r"get_loaded_extensions\s*\(.*\)"
                 ],
-                "php.original" : [
+                "php.original": [
                     r"exec.*\(.*\)",
                     r"`.*`",
                     r"passthru.*\(.*\)",
@@ -1052,7 +1065,7 @@ class CodeGrepper:
                     r"\$HTTP_POST_FILES",
                     r"\$http_post_files"
                 ],
-                "sql" : [
+                "sql": [
                     r"mysql_connect[\s]*\(.*\$.*\)",
                     r"mysql_pconnect[\s]*\(.*\$.*\)",
                     r"mysql_change_user[\s]*\(.*\$.*\)",
@@ -1095,10 +1108,10 @@ class CodeGrepper:
                     r"maxdb_.*[\s]*\(.*\$.*\)",
                     r"db2_.*[\s]*\(.*\$.*\)"
                 ],
-                "ssl" : [
+                "ssl": [
                     r"CURLOPT_SSL_VERIFY(HOST|PEER),.*([Ff][Aa][Ll][Ss][Ee]|0)"
                 ],
-                "streams.php" : [
+                "streams.php": [
                     r"unserialize[\s]*\(.*\$",
                     r"file_exists[\s]*\(.*\$",
                     r"md5_file[\s]*\(.*\$",
@@ -1118,7 +1131,7 @@ class CodeGrepper:
                     r"phar://.*\$",
                     r"expect://"
                 ],
-                "superglobal" : [
+                "superglobal": [
                     r"getenv\s*\(.*\)",
                     r"apache_getenv\s*\(.*\)",
                     r"putenv\s*\(.*\)",
@@ -1146,7 +1159,7 @@ class CodeGrepper:
                     r"\$http_post_files",
                     r"\$\$.*"
                 ],
-                "todo" : [
+                "todo": [
                     r"header\s*\(.*\$_(GET|POST|REQUEST|COOKIE).*\)",
                     r"eval\s*\(\s*.\$.*\s*\)",
                     r"file\s*\(.\$.*\)",
@@ -1168,7 +1181,7 @@ class CodeGrepper:
                     r"unserialize\s*\(.*\)",
                     r"unserialize_callback_func"
                 ],
-                "xss" : [
+                "xss": [
                     r"echo[\s]+.*\$(_ENV|_GET|_POST|_COOKIE|_REQUEST|_SERVER|HTTP|http).*",
                     r"print[\s]+.*\$(_ENV|_GET|_POST|_COOKIE|_REQUEST|_SERVER|HTTP|http).*",
                     r"print_r([\s]*\(|[\s]+).*\)?\$(_ENV|_GET|_POST|_COOKIE|_REQUEST|_SERVER|HTTP|http).*",
@@ -1176,8 +1189,8 @@ class CodeGrepper:
                     r"\<\%\=\$(_ENV|_GET|_POST|_COOKIE|_REQUEST|_SERVER|HTTP|http)"
                 ]
             },
-            "python" : {
-                "original" : [
+            "python": {
+                "original": [
                     r"access[\s]*\(",
                     r"assert[\s]*\(",
                     r"mkfifo",
@@ -1247,8 +1260,8 @@ class CodeGrepper:
                     r"urllib3.disable_warnings"
                 ]
             },
-            "nodejs" : {
-                "exec" : [
+            "nodejs": {
+                "exec": [
                     r"require([\s]*)\(([\s]*)'child_process'([\s]*)\)",
                     r"eval([\s]*)\(",
                     r"(setInterval|setTimeout|new([\s]*)Function)([\s]*)\(([\s]*)\".*\"",
@@ -1261,39 +1274,40 @@ class CodeGrepper:
                     r"(require\('js-yaml'\)\.load\(|yaml\.load\()",
                     r"(\.exec\()(.{0,40000})(req\.|req\.query|req\.body|req\.param)",
                     r"(\.exec\()"
-                    ],
+                ],
                 "ssl": [
                     r"(\[)*('|\")*NODE_TLS_REJECT_UNAUTHORIZED('|\")*(\])*(\s)*=(\s)*('|\")*0('|\")*",
                     r"SSL_VERIFYPEER(\s)*:(\s)*0"
-                    ],
+                ],
                 "csrf": [
                     r"csrf"
-                    ],
+                ],
                 "ssrf": [
                     r"require( )*(\()( *)('|\")(request|needle)('|\")( *)(\))",
                     r"(\()(.*?)(req\.|req\.query|req\.body|req\.param)",
                     r"\.get( *)(\()(.*?)(req\.|req\.query|req\.body|req\.param)"
-                    ],
+                ],
                 "weak-hash": [
                     r"createHash\(('|\")md5('|\")",
                     r"createHash\(('|\")sha1('|\")"
-                    ],
+                ],
                 "tempfiles": [
                     r"bodyParser\(.*\)"
-                    ],
+                ],
                 "dirtrav": [
                     r"(\.createReadStream\()(.{0,40000})(req\.|req\.query|req\.body|req\.param)",
                     r"(\.readFile\()(.{0,40000})(req\.|req\.query|req\.body|req\.param)",
-                    
-                    ],
-                "sql" : [
+
+                ],
+                "sql": [
                     r"\.(execQuery|query)([\s]*)\(([\s]*)\".*\".*\+",
                     r"\.(createConnection|connect)([\s]*)\(",
                     r"(SELECT|INSERT|UPDATE|DELETE|CREATE|EXPLAIN)(.{0,40000})(req\.|req\.query|req\.body|req\.param)",
-                    r"(\.)(find|drop|create|explain|delete|count|bulk|copy)(.{0,4000})({(.{0,4000})\$where:)(.{0,4000})(req\.|req\.query|req\.body|req\.param)",
-                    
-                    ],
-                "xss" : [
+                    r"(\.)(find|drop|create|explain|delete|count|bulk|copy)(.{0,4000})({(.{0,4000})\$where:)(.{0,4000})\
+                        (req\.|req\.query|req\.body|req\.param)",
+
+                ],
+                "xss": [
                     r"(window.)?location(([\s]*)|\.)(href)?\=",
                     r"handlebars.SafeString",
                     r"noEscape(\s)*:(\s)*true",
@@ -1304,7 +1318,7 @@ class CodeGrepper:
                     r"#{\s*[\w.\[\]\(\)\'\"]+\s*}",
                     r"&lt;%-\s*[\w.\[\]\(\)]+\s*%&gt;",
                     r"&lt;%-\s*@+[\w.\[\]\(\)]+\s*%&gt;",
-                    
+
                 ],
                 "hardcoded": [
                     r"\"(username|user|password|pass)\"([\s]*):([\s]*)\".*\"",
@@ -1313,15 +1327,15 @@ class CodeGrepper:
                     r"\s*['|\"]password['|\"]\s*:",
                     r"\s*['|\"]+secret['|\"]+\s*:|\s*secret\s*:\s*['|\"]+",
                     r"username\s*=\s*['|\"].+['|\"]\s{0,5}[;|.]",
-                    
+
                 ],
                 "misc": [
                     r"(res\.redirect\()( *)(req\.|req\.query|req\.body|req\.param)",
                     r"(res\.set\()(.{0,40000})(req\.|req\.query|req\.body|req\.param)"
-                ]                 
+                ]
             },
             "ruby": {
-                "exec" : [
+                "exec": [
                     r"_send_[\s]*\(",
                     r"__send__[\s]*\(",
                     r"`.*`",
@@ -1333,18 +1347,22 @@ class CodeGrepper:
                     r"exec[\s]*\(",
                     r"syscall[\s]*\("
                 ],
-                "in-out" : [
+                "in-out": [
                     r"File\.new[\s]*\(",
                     r"fork[\s]*\(",
                     r"write[\s]*\(",
-                    r"execve[\s]*\(" 
-                ] ,
-                "reflection" : [
-                "params\[:[\w]+\]\.constantize",
-                "new[\s]*\(params\[:[\w]+\]"
+                    r"execve[\s]*\("
+                ],
+                "reflection": [
+                    r"params\[:[\w]+\]\.constantize",
+                    r"new[\s]*\(params\[:[\w]+\]"
+                ],
+                "serialization":[
+                    r"Marshal.load\(",
+                    r"YAML.load\("
                 ]
             }
-            
+
         }
         if category is None:
             return signatures
@@ -1359,18 +1377,18 @@ class CodeGrepper:
         else:
             print("[-] Unknown category")
             return signatures
-            
-    
+
     def get_categories(self):
         return self.signatures.keys()
-    
+
     def print_categories(self):
         for c in self.signatures.keys():
-            print("\t" + c) 
+            print("\t" + c)
+
 
 def main():
     parser = argparse.ArgumentParser(description='Codegrepper - A simple code auditor by d3adc0de', add_help=True)
-    
+
     parser.add_argument(
         '-d', '--directory', required=False, type=str, default=".", help='Directory to start enumeration')
     parser.add_argument(
@@ -1387,40 +1405,42 @@ def main():
     args = parser.parse_args()
 
     if len(sys.argv) <= 1:
-    	parser.print_help()
-    
+        parser.print_help()
+
     if (args.category or args.subcategory) and args.regex:
         print("[-] Regex based and category based solution cannot go together")
         parser.print_help()
         sys.exit()
-    
+
     if args.subcategory and not args.category:
-        print("[-] Cannot set a subcagory without a category")
+        print("[-] Cannot set a subcategory without a category")
         parser.print_help()
         sys.exit()
-    
+
     if args.category == "#":
         print("[*] Categories:")
         CodeGrepper().print_categories()
-    elif args.category != None and args.subcategory == "#" :
+    elif args.category is not None and args.subcategory == "#":
         category = args.category.lower()
         print("[*] Subcategories of {}:".format(category))
         CodeGrepper(category=category).print_categories()
-    elif args.regex != None:
+    elif args.regex is not None:
         try:
-            cg = CodeGrepper(filter=args.filter,case_insensitive=args.insensitive).audit(directory=args.directory, regex=args.regex)
+            CodeGrepper(filter=args.filter, case_insensitive=args.insensitive).audit(directory=args.directory,
+                                                                                     regex=args.regex)
         except Exception as e:
-            print("[-] Something wrong happend")
+            print("[-] Something wrong happened")
             print(e)
     else:
         try:
             category = args.category.lower() if args.category else None
             subcategory = args.subcategory.lower() if args.subcategory else None
-            cg = CodeGrepper(category=category, subcategory=subcategory, filter=args.filter,case_insensitive=args.insensitive).audit(args.directory)
+            CodeGrepper(category=category, subcategory=subcategory, filter=args.filter,
+                        case_insensitive=args.insensitive).audit(args.directory)
         except Exception as e:
-            print("[-] Something wrong happend")
+            print("[-] Something wrong happened")
             print(e)
-            
+
+
 if __name__ == '__main__':
     main()
-    
