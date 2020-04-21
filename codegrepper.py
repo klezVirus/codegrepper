@@ -31,7 +31,7 @@ class CodeGrepper:
             with open(filepath, "rb").read(1024) as lookup:
                 return bool(bytes.translate(None, CodeGrepper.TEXTCHARS.encode()))
         except Exception as e:
-            print(e)
+            #print(e) // Causing the __enter__ bug
             return False
 
     def is_filtered(self, file_path):
@@ -77,7 +77,7 @@ class CodeGrepper:
                                                                 line.strip().replace(mo.group(), "%s" % self.highlight[
                                                                     0] + mo.group() + self.highlight[1])))
                 except Exception as e:
-                    print(e)
+                    #print(e)
                     print("[-] Error opening file: {}".format(file_path))
 
     def init_signatures(self, category=None, subcategory=None):
@@ -365,6 +365,40 @@ class CodeGrepper:
                     r"XPathExpression",
                     r"DOMSource",
                     r"StAXSource"
+                ],
+                "serialization": [
+
+                    r".*readObject\(.*",
+                    r"java.beans.XMLDecoder",
+                    r"com.thoughtworks.xstream.XStream",
+                    r".*\.fromXML\(.*\)",
+                    r"com.esotericsoftware.kryo.io.Input",
+                    r".readClassAndObject\(.*",
+                    r".readObjectOrNull\(.*",
+                    r"com.caucho.hessian.io",
+                    r"com.caucho.burlap.io.BurlapInput",
+                    r"com.caucho.burlap.io.BurlapOutput",
+                    r"org.codehaus.castor",
+                    r"[U|u]nmarshal",
+                    r"jsonToJava\(.*",
+                    r"JsonObjectsToJava\/.*",
+                    r"JsonReader",
+                    r"ObjectMapper\(",
+                    r"enableDefaultTyping\(\s*\)",
+                    r"@JsonTypeInfo\(",
+                    r"readValue\(.*\,\s*Object\.class",
+                    r"com.alibaba.fastjson.JSON",
+                    r"JSON.parseObject",
+                    r"com.owlike.genson.Genson",
+                    r"useRuntimeType",
+                    r"genson.deserialize",
+                    r"org.red5.io",
+                    r"deserialize\(.*\,\s*Object\.class",
+                    r"\.Yaml",
+                    r"\.load\(.*",
+                    r"\.loadType\(.*\,\s*Object\.class",
+                    r"YamlReader",
+                    r"com.esotericsoftware.yamlbeans"
                 ]
             },
             "owasp": {
@@ -1406,6 +1440,7 @@ def main():
 
     if len(sys.argv) <= 1:
         parser.print_help()
+        sys.exit()
 
     if (args.category or args.subcategory) and args.regex:
         print("[-] Regex based and category based solution cannot go together")
