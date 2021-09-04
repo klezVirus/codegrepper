@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 # Pure python, self-contained implementation of a very basics SAST tool
 # Created by d3adc0de
@@ -10,20 +10,98 @@ import os
 import argparse
 import sys
 from pathlib import Path
+import traceback
+import time
+from colorama import Fore
+
+
+class LogLevel(object):
+    UNKNOWN = -1
+    DEBUG = 0
+    INFO = 1
+    WARNING = 2
+    ERROR = 2
+
+    @staticmethod
+    def to_s(level):
+        if level == LogLevel.DEBUG:
+            return "DEBUG"
+        elif level == LogLevel.INFO:
+            return "INFO"
+        elif level == LogLevel.WARNING:
+            return "WARNING"
+        elif level == LogLevel.ERROR:
+            return "ERROR"
+        else:
+            return "UNKNOWN"
+
+
+class Logger(object):
+    def __init__(self, filename=None):
+        self.log_file = filename if filename else "debug.log"
+
+    @staticmethod
+    def logging(message, level=None):
+        if not level:
+            level = LogLevel.UNKNOWN
+        print(f"[{level}][{time.time()}]: {message}")
+
+    def log(self, message, level=None):
+        time_tag = time.strftime('%Y%m%d%H%M%S', time.localtime())
+        if not level:
+            level = LogLevel.INFO
+        try:
+            with open(self.log_file, "a") as _log:
+                _log.write(
+                    f"[{time_tag}][{LogLevel.to_s(level)}]: {message.encode(errors='ignore')}\n")
+        except Exception as e:
+            print(e)
+            pass
+
+    def info(self, message):
+        self.log(message, LogLevel.INFO)
+
+    def warn(self, message):
+        self.log(message, LogLevel.WARNING)
+
+    def error(self, message):
+        self.log(message, LogLevel.ERROR)
 
 
 class CodeGrepper:
     TEXTCHARS = ''.join(map(chr, [7, 8, 9, 10, 12, 13, 27] + list(range(0x20, 0x100))))
 
-    def __init__(self, category=None, subcategory=None, filter=None, case_insensitive=False):
+    def __init__(self, category=None, subcategory=None, filter=None, case_insensitive=False, advanced_filter=None,
+                 exclude_comments=False, debug=False, context=None, files_only=False, relative_paths=False, no_regex=False):
         self.signatures = self.init_signatures(category, subcategory)
         self.category = category
         self.subcategory = subcategory
+        self.advanced_filter = advanced_filter
+        if exclude_comments:
+            self.exclude_comments()
         self.case_insensitive = case_insensitive
-        self.highlight = ["\033[92m", "\033[0m"] if os.name != "nt" else ["", ""]
+        self.forward_context = 0
+        self.backward_context = 0
+        self.parse_context(context)
+        self.files_only = files_only
+        self.relative_paths = relative_paths
+        self.dont_show_regex = no_regex
+        self.highlight = ["", ""]
         self.filter = [filter] if filter else ["php", "rb", "js", "java", "pl", "phtml", "cs", "c", "cpp", "xml",
-                                               "config", "ini", "sql"]
+                                               "config", "ini", "sql", "pas"]
         self.exclude = ["png", "jpg", "jpeg", "gif", "woff", "svg", "woff2", "tiff", "mp3"]
+        self.debug = debug
+        self.logger = Logger() if debug else None
+
+    def parse_context(self, context):
+        if not context:
+            return
+        plus = re.search(r"\+\s*\d+", context)
+        minus = re.search(r"-\s*\d+", context)
+        if plus:
+            self.forward_context = int(plus[0].replace("+", "").strip()) + 1
+        if minus:
+            self.backward_context = int(minus[0].replace("-", "").strip())
 
     @staticmethod
     def is_binary(filepath):
@@ -31,7 +109,42 @@ class CodeGrepper:
             with open(filepath, "rb").read(1024) as lookup:
                 return bool(bytes.translate(None, CodeGrepper.TEXTCHARS.encode()))
         except Exception as e:
-            #print(e) // Causing the __enter__ bug
+            # print(e) // Causing the __enter__ bug
+            return False
+
+    def exclude_comments(self):
+        sig = self.init_signatures(category=self.category)
+        if "comments" in sig.keys():
+            self.advanced_filter["exclude-regexes"] += sig["comments"]
+
+    def is_included(self, path):
+        if not self.advanced_filter:
+            return True
+        if len(self.advanced_filter["include-directory"]) > 0:
+            for f in self.advanced_filter["include-directory"]:
+                regex = re.compile(f, re.IGNORECASE)
+                if regex.search(path):
+                    return True
+            return False
+        elif len(self.advanced_filter["exclude-directory"]) > 0:
+            for f in self.advanced_filter["exclude-directory"]:
+                regex = re.compile(f, re.IGNORECASE)
+                if regex.search(path):
+                    return False
+            return True
+        else:
+            return True
+
+    def regex_excluded(self, mo):
+        if not self.advanced_filter:
+            return False
+        if len(self.advanced_filter["exclude-regexes"]) > 0:
+            for f in self.advanced_filter["exclude-regexes"]:
+                pattern = re.compile(f)
+                if pattern.search(f"{mo.group()}"):
+                    return True
+            return False
+        else:
             return False
 
     def is_filtered(self, file_path):
@@ -58,26 +171,82 @@ class CodeGrepper:
             self.search(directory, regex)
 
     def search(self, directory=".", regex=None, category=None, subcategory=None):
+        if self.debug:
+            self.logger.info(f"[*] Start searching")
         pattern = re.compile(regex, re.IGNORECASE) if self.case_insensitive else re.compile(regex)
 
         for path, _, files in os.walk(directory):
+            if self.debug:
+                self.logger.info(f"Searching within {path}")
+
+            if not self.is_included(path):
+                continue
+            # for skip in [x for x in _ if not self.is_included(x)]:
+            #     _.remove(skip)
+
             for fn in files:
                 file_path = os.path.join(path, fn)
+                if self.debug:
+                    self.logger.info(f"Analysing {file_path}")
 
                 if self.is_binary(file_path):
+                    if self.debug:
+                        self.logger.info(f"Binary File: {file_path}")
                     continue
                 if not self.is_filtered(file_path):
+                    if self.debug:
+                        self.logger.info(f"Filtered File: {file_path}")
                     continue
                 try:
+                    if self.debug:
+                        self.logger.info(f"Grepping file: {file_path}")
+
                     with open(file_path, "r", errors="ignore") as handle:
-                        for lineno, line in enumerate(handle):
+                        lines = handle.readlines()
+                        lineno = 0
+                        display_path = file_path if not self.relative_paths else Path(
+                            file_path).relative_to(Path(directory)).as_posix()
+
+                        # for lineno, line in enumerate(handle):
+                        for line in lines:
                             mo = pattern.search(line)
                             if mo:
-                                print("[*][%s][%s]%s:%s: %s" % (category, subcategory, file_path, lineno,
-                                                                line.strip().replace(mo.group(), "%s" % self.highlight[
-                                                                    0] + mo.group() + self.highlight[1])))
+                                if self.regex_excluded(mo):
+                                    # print("Skipping")
+                                    continue
+                                msg = ""
+
+                                if category:
+                                    if not self.dont_show_regex:
+                                        msg += f"[{Fore.BLUE}{category}{Fore.WHITE}][{Fore.BLUE}{subcategory}{Fore.WHITE}]{Fore.MAGENTA}{display_path}{Fore.WHITE}"
+                                    else:
+                                        msg += f"{Fore.MAGENTA}{display_path}{Fore.WHITE}"
+                                else:
+                                    if not self.dont_show_regex:
+                                        msg += f"[{Fore.BLUE}custom{Fore.WHITE}]{Fore.MAGENTA}{display_path}{Fore.WHITE}"
+                                    else:
+                                        msg += f"{Fore.MAGENTA}{display_path}{Fore.WHITE}"
+
+                                if self.files_only:
+                                    print(msg)
+                                    break
+
+                                show = line.strip().replace(
+                                    mo.group(),
+                                    f"{Fore.RED}{mo.group()}{Fore.WHITE}")
+
+                                if self.forward_context + self.backward_context == 0:
+                                    msg += f":{Fore.GREEN}{lineno}{Fore.WHITE}: {show}"
+                                else:
+                                    show = "".join([f"{_ln}: {lines[_ln]}" if _ln != lineno else f"{_ln}: {Fore.RED}{lines[_ln]}{Fore.WHITE}" for _ln in range(
+                                        lineno-self.backward_context, lineno+self.forward_context
+                                    )])
+                                    msg += f"\n{show}"
+                                print(msg)
+                            lineno += 1
                 except Exception as e:
-                    #print(e)
+                    if self.debug:
+                        self.logger.error(f"Exception: {e}")
                     print("[-] Error opening file: {}".format(file_path))
 
     def init_signatures(self, category=None, subcategory=None):
@@ -95,7 +264,7 @@ class CodeGrepper:
                     r"base64",
                     r"xor",
                     r"\([\s]*DES|TripleDES|DES[\s]*\)",
-                    r"RC2",
+                    r"(RC2|RC4)",
                     r"System.Random",
                     r"Random",
                     r"System.Security.Cryptography",
@@ -194,14 +363,32 @@ class CodeGrepper:
                     r"Serializable",
                     r"SerializeObject",
                     r"SerializationBinder",
-                    r"JavaScriptSerializer",
+                    r"SimpleTypeResolver",
                     r"Json.Net",
+                    r"ToObject",
+                    r"ReadObject",
                     r"YamlDotNet",
                     r"JsonSerializerSettings",
-                    r"DeserializeObject",
+                    r"TypeNameHandling.All",
+                    r"DeserializeObject\s*\(",
+                    r"Deserialize\s*\(",
                     r"ISerializable",
                     r"(Json|JavaScript|Xml|(Net)*DataContract)Serializer",
                     r"(Binary|ObjectState|Los|Soap)Formatter"
+                ],
+                "deserialization": [
+                    r"[^\w]*(JavaScript|Xml)Serializer",
+                    r"SimpleTypeResolver",
+                    r"ToObject[\s]*\(",
+                    r"ReadObject[\s]*\(",
+                    r"TypeNameHandling.All",
+                    r"DeserializeObject[\s]*\(",
+                    r"Deserialize[\s]*\("
+                ],
+                "sqlstrings": [
+                    r"SELECT.*WHERE",
+                    r"INSERT.*VALUES\(",
+                    r"(OR|AND).*(LIKE|=|<|>|!)",
                 ],
                 "sql": [
                     r"exec\s*sp_executesql",
@@ -367,8 +554,8 @@ class CodeGrepper:
                     r"StAXSource"
                 ],
                 "serialization": [
-
                     r".*readObject\(.*",
+                    r".*readResolve\(.*",
                     r"java.beans.XMLDecoder",
                     r"com.thoughtworks.xstream.XStream",
                     r".*\.fromXML\(.*\)",
@@ -961,6 +1148,9 @@ class CodeGrepper:
                     r"sqlite_create_aggregate",
                     r"sqlite_create_function"
                 ],
+                "hashes": [
+                    r"sha1\s*\(\s*[\w|\$|\"|\']*\s*\."
+                ],
                 "exec": [
                     r"assert([\s]*\(|[\s]+).*\)?",
                     r"exec([\s]*\(|[\s]+).*\)?",
@@ -1193,6 +1383,16 @@ class CodeGrepper:
                     r"\$http_post_files",
                     r"\$\$.*"
                 ],
+                "deserialization": [
+                    r"unserialize\s*\(",
+                    r"unserialize_callback_func"
+                ],
+                "deserialization-gadgets": [
+                    r"function\s+__[w|W]ake[u|U]p\s*\(",
+                    r"function\s+__[d|D]setruct\s*\(",
+                    r"function\s+__[c|C]onstruct\s*\(",
+                    r"function\s+__to[s|S]tring\s*\("
+                ],
                 "todo": [
                     r"header\s*\(.*\$_(GET|POST|REQUEST|COOKIE).*\)",
                     r"eval\s*\(\s*.\$.*\s*\)",
@@ -1221,7 +1421,16 @@ class CodeGrepper:
                     r"print_r([\s]*\(|[\s]+).*\)?\$(_ENV|_GET|_POST|_COOKIE|_REQUEST|_SERVER|HTTP|http).*",
                     r"\<\?\=\$(_ENV|_GET|_POST|_COOKIE|_REQUEST|_SERVER|HTTP|http)",
                     r"\<\%\=\$(_ENV|_GET|_POST|_COOKIE|_REQUEST|_SERVER|HTTP|http)"
-                ]
+                ],
+                "xxe": [
+                    r"loadXML\s*\(.*\$.*",
+                    r"xml_parse\s*\(.*\$.*",
+                    r"simplexml_load_string\s*\(.*\$.*",
+                    r"simplexml_import_dom\s*\(.*\$.*",
+                    r"readOuterXML\s*\(.*\$.*",
+                    r"readInnerXML\s*\(.*\$.*",
+                    r"XMLReader",
+                ],
             },
             "python": {
                 "original": [
@@ -1391,9 +1600,49 @@ class CodeGrepper:
                     r"params\[:[\w]+\]\.constantize",
                     r"new[\s]*\(params\[:[\w]+\]"
                 ],
-                "serialization":[
+                "serialization": [
                     r"Marshal.load\(",
                     r"YAML.load\("
+                ]
+            },
+            "delphi": {
+                "exec": [
+                    r"uses ShellApi;",
+                    r"ShellExecute\s*\(.*",
+                    r"WinExec\s*\(.*",
+
+                ],
+                "unsafe": [
+                    r"StrCopy\s*\(.*",
+                    r"lstrcpy\s*\(.*",
+                    r"strcat\s*\(.*",
+                    r"strlen\s*\(.*",
+                    r"strcmp\s*\(.*",
+                    r"LoadLibrary\s*\(.*",
+                ],
+                "sources": [
+                    r"(^|\s+)ParamString\s*\(.*",
+                    r"(^|\s+)ReadLn\s*\(.*",
+                    r"(^|\s+)ReadKey\s*\(.*",
+                    r"(^|\s+)Read\s*\(.*"
+                ],
+                "sql": [
+                    r"([\w]+)\.SQL\.Add\s*\(",
+                    r"(^|\s+)(ALTER|CREATE|DELETE|DROP|EXEC(UTE){0,1}|INSERT( +INTO)"
+                    r"{0,1}|MERGE|SELECT|UPDATE|UNION( +ALL){0,1})(\s)+"
+                ],
+                "csv": [
+                    "TSdfDataset"
+                ],
+                "sensitive": [
+                    r"\".*user\"",
+                    r".*user",
+                    r"\".*pass(wd|word)?\"",
+                    r".*pass(wd|word)?",
+                    r"\s+.*token\s+"
+                ],
+                "comments": [
+                    r"^\s*//"
                 ]
             }
 
@@ -1435,8 +1684,46 @@ def main():
         '-s', '--subcategory', required=False, type=str, default=None, help='Subcategories [# to get subcategory list]')
     parser.add_argument(
         '-i', '--insensitive', required=False, default=False, action='store_true', help='Case insensitive search')
+    parser.add_argument(
+        '-D', '--debug', required=False, default=False, action='store_true', help='Enable debug logging')
+    parser.add_argument(
+        '-I', '--includedir', required=False, type=str, action='append', default=None,
+        help='Include only directory (regex)')
+    parser.add_argument(
+        '-L', '--context-lines', required=False, type=str, default=None, help='Include context lines')
+    parser.add_argument(
+        '-E', '--excludedir', required=False, type=str, action='append', default=None,
+        help='Exclude directory (regex)')
+    parser.add_argument(
+        '-rx', '--excluderegex', required=False, type=str, action='append', default=None,
+        help='Exclude regexes')
+    parser.add_argument(
+        '-nc', '--no-comments', required=False, default=False, action='store_true', help='Exclude comments')
+    parser.add_argument(
+        '--no-regex', required=False, default=False, action='store_true',
+        help='Exclude [category][subcategory] from output')
+    parser.add_argument(
+        '-rel', '--relative-paths', required=False, default=False, action='store_true', help='Use relative paths')
+    parser.add_argument(
+        '-fo', '--files-only', required=False, default=False, action='store_true',
+        help='Print only path of matching files')
+    # parser.add_argument(
+    #    '-ri', '--includeregex', required=False, type=str, default=None, help='File extension filter')
 
     args = parser.parse_args()
+
+    advanced_filter = {
+        "exclude-directory": [],
+        "include-directory": [],
+        "exclude-regexes": []
+    }
+
+    if args.excludedir:
+        advanced_filter["exclude-directory"] = args.excludedir
+    if args.includedir:
+        advanced_filter["include-directory"] = args.includedir
+    if args.excluderegex:
+        advanced_filter["exclude-regexes"] = args.excluderegex
 
     if len(sys.argv) <= 1:
         parser.print_help()
@@ -1461,21 +1748,29 @@ def main():
         CodeGrepper(category=category).print_categories()
     elif args.regex is not None:
         try:
-            CodeGrepper(filter=args.filter, case_insensitive=args.insensitive).audit(directory=args.directory,
-                                                                                     regex=args.regex)
+            CodeGrepper(filter=args.filter, case_insensitive=args.insensitive, advanced_filter=advanced_filter,
+                        exclude_comments=args.no_comments, debug=args.debug, context=args.context_lines,
+                        files_only=args.files_only, relative_paths=args.relative_paths, no_regex=args.no_regex).audit(
+                                                directory=args.directory, regex=args.regex)
         except Exception as e:
             print("[-] Something wrong happened")
+            traceback.print_exc()
             print(e)
     else:
         try:
             category = args.category.lower() if args.category else None
             subcategory = args.subcategory.lower() if args.subcategory else None
             CodeGrepper(category=category, subcategory=subcategory, filter=args.filter,
-                        case_insensitive=args.insensitive).audit(args.directory)
+                        case_insensitive=args.insensitive, advanced_filter=advanced_filter,
+                        exclude_comments=args.no_comments, debug=args.debug, context=args.context_lines,
+                        files_only=args.files_only, relative_paths=args.relative_paths, no_regex=args.no_regex
+                        ).audit(args.directory)
         except Exception as e:
             print("[-] Something wrong happened")
+            traceback.print_exc()
             print(e)
 
 
 if __name__ == '__main__':
+    os.system('color')
     main()
